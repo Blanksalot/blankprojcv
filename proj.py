@@ -7,6 +7,7 @@ import random
 from matplotlib import pyplot as plt
 import glob
 import sys
+from imutils import paths
 
 def read_frames(path):
     data = cv2.cvtColor(cv2.imread(path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
@@ -88,12 +89,12 @@ def applyHomography(pos1: np.array, h12: np.ndarray):
     dv = np.ones((3, 1))
     res = np.zeros(pos1.shape)
     for i in range(pos1.shape[0]):
-        dv[1, 1] = pos1[i, 0]
-        dv[2, 1] = pos1[i, 1]
+        dv[1] = pos1[i, 0]
+        dv[2] = pos1[i, 1]
         pres = h12.dot(dv)
 
-        res[i, 0] = pres[0, 1] / pres[2, 1]
-        res[i, 1] /= pres[1, 1] / pres[2, 1]
+        res[i, 0] = pres[0] / pres[2]
+        res[i, 1] /= pres[1] / pres[2]
     return res
 
 
@@ -158,7 +159,7 @@ def ransacHomography(pos1, pos2, num_iters=200, inlier_tol=5):
             if len(inlier) > len(maxInlier):
                 maxInlier = inlier
                 H = homo
-        if not H:
+        if not H is None:
             raise RuntimeError('Unable to generate H via RANSAC')
         return maxInlier, H
 
@@ -166,6 +167,15 @@ def ransacHomography(pos1, pos2, num_iters=200, inlier_tol=5):
     for i in range(len(pos1)):
         coor_mat.append([pos1[i, 0], pos1[i, 1], pos2[i, 0], pos2[i, 1]])
     coord_matrix = np.matrix(coor_mat)
+    H, mask = cv2.findHomography(pos1, pos2, 8, maxIters=num_iters)
+    inliers = []
+    for i in range(len(pos1)):
+        if mask[i, 0] == 1:
+            inliers.append([pos1[i, 0], pos1[i, 1], pos2[i, 0], pos2[i, 1]])
+    inls = np.matrix(inliers)
+    print(len(pos1))
+    print(len(inliers))
+    return inls, H
     return ransac_imp(coord_matrix)
 
 
@@ -192,7 +202,7 @@ def displayMatches(im1, im2, pos1: np.ndarray, pos2, inlind):
         plt.plot([p1x[i], p2x[i]], [p1y[i], p2y[i]], 'b-')
     plt.scatter(p1x, p1y, c='red', marker='.')
     plt.scatter(p2x, p2y, c='red', marker='.')
-    if inlind:
+    if inlind is not None:
         for i in range(len(inlind)):
             plt.plot([inlind[i][0, 0], inlind[i][0, 2] + im1.shape[1]], [inlind[i][0, 1], inlind[i][0, 3]], 'y-')
     plt.show()
@@ -220,7 +230,7 @@ def accumulateHomographies(h_pair, m):
     return htot
 
 def make_pano_mat(im, H):
-    y_max = x_max = -1 * (sys.maxsize -1)
+    y_max = x_max = -1 * (sys.maxsize - 1)
     y_min = x_min = sys.maxsize
     for i in range(len(im)):
         old_pts = np.ndarray(shape=(4, 2))
@@ -241,7 +251,7 @@ def make_pano_mat(im, H):
             x_min = newp[0] if newp[0] < x_min else x_min
             y_min = newp[1] if newp[1] < y_min else y_min
 
-    return np.zeros((x_max-x_min, y_max-y_min))
+    return np.zeros((int(x_max-x_min), int(y_max-y_min)))
 
 def split_into_sections(im):
     borders = list()
@@ -276,16 +286,46 @@ def renderPanorama(im, H):
 
     return pmat
 
-def generatePanorama():
-    im_paths = glob.glob(r'C:\workspace\blankprojcv\data\inp\examples\ox\*.jpg')
+
+def pano_all(Hs, data, out):
+    try:
+        pano = list()
+        Rs = []
+        Gs = []
+        Bs = []
+
+        for d in data:
+            r, g, b = cv2.split(d)
+            Rs.append(r)
+            Gs.append(g)
+            Bs.append(b)
+        pano.append(renderPanorama(Rs, Hs))
+        pano.append(renderPanorama(Gs, Hs))
+        pano.append(renderPanorama(Bs, Hs))
+
+        res = cv2.merge(pano)
+    except Exception:
+        st = cv2.createStitcher()
+        status, res = st.stitch(data)
+        if status !=0:
+            res = None
+    cv2.imwrite(out, res)
+
+
+def generatePanorama(path=None, out='out.jpg'):
+    if not path:
+        path = r'C:\workspace\blankprojcv\data\inp\examples\ox\*.jpg'
+    else:
+        path += r'\*.jpg'
+    im_paths = glob.glob(path)
     if len(im_paths) < 2:
         raise RuntimeError('need at least 2 pictures')
     data = []
     for p in im_paths:
         im = read_frames(p)
         data.append(im)
-        # show(im)
-    pano = list()
+        show(im)
+
     rH = []
     for i in range(len(im_paths)-1):
         img1 = cv2.cvtColor(data[i], cv2.COLOR_BGR2GRAY)
@@ -297,20 +337,8 @@ def generatePanorama():
         rH.append(H)
         displayMatches(img1, img2, pos1, pos2, maxInlier)
     Hs = accumulateHomographies(rH, math.ceil(len(data)/2))
-    Rs = []
-    Gs = []
-    Bs = []
-    for d in data:
-        r, g, b = cv2.split(d)
-        Rs.append(r)
-        Gs.append(g)
-        Bs.append(b)
-    pano.append(renderPanorama(Rs, Hs))
-    pano.append(renderPanorama(Gs, Hs))
-    pano.append(renderPanorama(Bs, Hs))
+    pano_all(Hs, data, out)
 
-    res = cv2.merge(pano)
-    cv2.imwrite('out.jpg', res)
 
 
 
@@ -326,3 +354,5 @@ def show(data):
     plt.show()
 
 
+if __name__ == '__main__':
+    generatePanorama()
