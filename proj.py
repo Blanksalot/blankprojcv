@@ -373,12 +373,7 @@ def renderPanorama(im, H):
         pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
         pmat[66: w_im[1].shape[0]+66, pmat.shape[1]-w_im[1].shape[1] - 320:pmat.shape[1] - 320] = w_im[1]
         pmat[5:, pmat.shape[1] - 520:] = w_im[2][:w_im[2].shape[0]-5, w_im[2].shape[1]-520:]
-        # pmat[: w_im[1].shape[0], pmat.shape[1]/3:int(2*pmat.shape[1]/3)] = w_im[0][:, pmat.shape[1]/3:int(2*pmat.shape[1]/3)]
-        # offset = pmat.shape[1] - w_im[1].shape[1] -30
-        # y_off = pmat.shape[0] - w_im[1].shape[0] - 108
-        # pmat[y_off:w_im[1].shape[0] + y_off, offset:pmat.shape[1] -30] = w_im[1]
-        # offset = pmat.shape[1] - (w_im[2].shape[1])
-        # pmat[0:w_im[2].shape[0], offset:] = w_im[2]
+
     return pmat
 
 
