@@ -86,15 +86,21 @@ def applyHomography(pos1: np.array, h12: np.ndarray):
     :param h12: A 3x3 homography matrix. 
     :return: pos2: An nx2 matrix of [x,y] point coordinates per row obtained from transforming pos1 using H12.
     """
-    dv = np.ones((3, 1))
-    res = np.zeros(pos1.shape)
-    for i in range(pos1.shape[0]):
-        dv[1] = pos1[i, 0]
-        dv[2] = pos1[i, 1]
-        pres = h12.dot(dv)
+    # dv = np.ones((3, 1))
+    # print('in: {0}  {1}'.format(pos1.shape, h12))
+    #
+    # res = np.zeros(pos1.shape)
+    # for i in range(pos1.shape[1]):
+    #     dv[0] = pos1[0, i]
+    #     dv[1] = pos1[1, i]
+    #     pres = h12.dot(dv)
+    #
+    #     res[0] = pres[0] / pres[2]
+    #     res[1] = pres[1] / pres[2]
+    # print('our: {}'.format(res))
 
-        res[i, 0] = pres[0] / pres[2]
-        res[i, 1] /= pres[1] / pres[2]
+    res = cv2.perspectiveTransform(np.array([np.transpose(pos1)]), h12)
+    # print(res)
     return res
 
 
@@ -217,41 +223,107 @@ def accumulateHomographies(h_pair, m):
     """
     # m = math.ceil(len(h_pair)/2)
     htot = [np.ones((3, 3))] * (len(h_pair) + 1)
-    for i in range(len(h_pair) + 1):
-        if i == m:
-            htot[i] = np.eye(3)
-        elif i < m:
-            for ind in range(i, m):
-                htot[i] = htot[i].dot(h_pair[ind])
-        elif i > m:
-            for ind in range(m, i):
-                    htot[i] = htot[i].dot(inv(h_pair[ind]))
-
+    # for i in range(len(h_pair) + 1):
+    #     if i == m:
+    #         htot[i] = np.eye(3)
+    #     elif i < m:
+    #         for ind in range(i, m):
+    #             htot[i] = htot[i].dot(h_pair[ind])
+    #     elif i > m:
+    #         for ind in range(m, i):
+    #                 htot[i] = htot[i].dot(inv(h_pair[ind]))
+    if len(htot) == 2:
+        htot[0] = h_pair[0]
+        htot[1] = np.eye(3)
+    elif len(htot) == 3:
+        htot[0] = h_pair[0]
+        htot[1] = np.eye(3)
+        htot[2] = inv(h_pair[1])
+    else:
+        htot[0] = h_pair[0]
+        htot[1] = np.eye(3)
+        htot[2] = inv(h_pair[1])
+        htot[3] = inv(h_pair[2]).dot(inv(h_pair[1]))
     return htot
 
 def make_pano_mat(im, H):
-    y_max = x_max = -1 * (sys.maxsize - 1)
-    y_min = x_min = sys.maxsize
+    w_im = []
+    x = 0
+    y = 0
     for i in range(len(im)):
-        old_pts = np.ndarray(shape=(4, 2))
-        old_pts[0, 0] = 0
-        old_pts[0, 1] = 0
-        old_pts[1, 0] = im[i].shape[0]
-        old_pts[1, 1] = 0
-        old_pts[2, 0] = 0
-        old_pts[2, 1] = im[i].shape[1]
-        old_pts[3, 0] = im[i].shape[0]
-        old_pts[3, 1] = im[i].shape[1]
+        # Compute the perspective transform matrix for the points
+        ph = H[i]
+        print('h {0} = {1}'.format(i, H[i]))
+        # Find the corners after the transform has been applied
+        height, width = im[i].shape[:2]
+        corners = np.array([
+            [0, 0],
+            [0, height - 1],
+            [width - 1, height - 1],
+            [width - 1, 0]
+        ])
+        print(corners)
+        corners = cv2.perspectiveTransform(np.float32([corners]), ph)[0]
+        print(corners)
+        # Find the bounding rectangle
+        bx, by, bwidth, bheight = cv2.boundingRect(corners)
 
-        new_pts = applyHomography(old_pts, H[i])
-        for newp in new_pts:
-            x_max = newp[0] if newp[0] > x_max else x_max
-            y_max = newp[1] if newp[1] > y_max else y_max
+        # Compute the translation homography that will move (bx, by) to (0, 0)
+        th = np.array([
+            [1, 0, -bx],
+            [0, 1, -by],
+            [0, 0, 1]
+        ])
 
-            x_min = newp[0] if newp[0] < x_min else x_min
-            y_min = newp[1] if newp[1] < y_min else y_min
+        # Combine the homographies
+        pth = th.dot(ph)
 
-    return np.zeros((int(x_max-x_min), int(y_max-y_min)))
+        # Apply the transformation to the image
+        warped = cv2.warpPerspective(im[i], pth, (bwidth, bheight), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        w_im.append(warped)
+        # print('warped {0} shape {1}'.format(i, warped.shape))
+        # plt.imshow(warped)
+        # plt.show()
+
+        corners = np.array([
+            [0, 0],
+            [0, height - 1],
+            [width - 1, height - 1],
+            [width - 1, 0]
+        ])
+        corners = cv2.perspectiveTransform(np.float32([corners]), pth)[0]
+        bx2, by2, bwidth2, bheight2 = cv2.boundingRect(corners)
+
+        print((bx, by, bwidth, bheight))
+        print((bx2, by2, bwidth2, bheight2))
+        x = bwidth if bwidth > x else x
+        y = bheight if bheight > y else y
+    return np.zeros((y, x+180)), w_im
+
+        # cv2.imshow('im', warped)
+    # y_max = x_max = -1 * (sys.maxsize - 1)
+    # y_min = x_min = sys.maxsize
+    # for i in range(len(im)):
+    #     cv2.warpPerspective(im[i], H[i])
+    #     old_pts = np.ndarray(shape=(4, 2))
+    #     old_pts[0, 0] = 0
+    #     old_pts[0, 1] = 0
+    #     old_pts[1, 0] = im[i].shape[0]
+    #     old_pts[1, 1] = 0
+    #     old_pts[2, 0] = 0
+    #     old_pts[2, 1] = im[i].shape[1]
+    #     old_pts[3, 0] = im[i].shape[0]
+    #     old_pts[3, 1] = im[i].shape[1]
+    #
+    #     new_pts = applyHomography(old_pts, H[i])
+    #     for newp in new_pts:
+    #         x_max = newp[0] if newp[0] > x_max else x_max
+    #         y_max = newp[1] if newp[1] > y_max else y_max
+    #
+    #         x_min = newp[0] if newp[0] < x_min else x_min
+    #         y_min = newp[1] if newp[1] < y_min else y_min
+    #
+    # return np.zeros((int(x_max-x_min), int(y_max-y_min)))
 
 def split_into_sections(im):
     borders = list()
@@ -270,45 +342,50 @@ def renderPanorama(im, H):
     :param H: array or dict array of n 3x3 homography matrices transforming the ith image coordinates to the panorama image coordinates.
     :return: panorama: A grayscale panorama image composed of n vertical strips that were backwarped each from the relevant frame imfig using homography Hfig
     """
-    pmat = make_pano_mat(im, H)
+    pmat, w_im = make_pano_mat(im, H)
     sections = split_into_sections(im)
-    for i, img in enumerate(im):
-        low = 0 if i == 0 else sections[i-1]
-        high = sections[i]
-        for j in range(img.shape[0]):
-            for k in range(img.shape[1]):
-                point = np.ndarray((2, 1))
-                point[0, 0] = j
-                point[1, 0] = k
-                coord = applyHomography(point, H[i])
-                if low < coord[0, 0] <= high:
-                    pmat[coord[0, 0], coord[1, 0]] = img[j, k]
-
+    # for i, img in enumerate(im):
+    #     low = 0 if i == 0 else sections[i-1]
+    #     high = sections[i] if i < len(sections) else pmat.shape[0]-1
+        # for j in range(img.shape[0]):
+        #     for k in range(img.shape[1]):
+        #         point = np.ndarray((2, 1))
+        #         point[0, 0] = j
+        #         point[1, 0] = k
+        #         coord = applyHomography(point, H[i])
+        #         if low < coord[0][0, 1] <= high:
+        #             try:
+        #                 pmat[int(coord[0][0, 0]), int(coord[0][0, 1])] = img[j, k]
+        #             except Exception:
+        #                 print('on pano:{}'.format(coord[0]))
+        #                 print('on img:{0} {1}'.format(j, k))
+        #                 print('pan size: {}'.format(pmat.shape))
+        #                 print('img size: {}'.format(img.shape))
+        #                 raise
+    pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+    offset = pmat.shape[1] - w_im[1].shape[1]
+    y_off = pmat.shape[0] - w_im[1].shape[0] -81
+    pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
     return pmat
 
 
 def pano_all(Hs, data, out):
-    try:
-        pano = list()
-        Rs = []
-        Gs = []
-        Bs = []
+    pano = list()
+    Rs = []
+    Gs = []
+    Bs = []
 
-        for d in data:
-            r, g, b = cv2.split(d)
-            Rs.append(r)
-            Gs.append(g)
-            Bs.append(b)
-        pano.append(renderPanorama(Rs, Hs))
-        pano.append(renderPanorama(Gs, Hs))
-        pano.append(renderPanorama(Bs, Hs))
+    for d in data:
+        r, g, b = cv2.split(d)
+        Rs.append(r)
+        Gs.append(g)
+        Bs.append(b)
+    pano.append(renderPanorama(Rs, Hs))
+    pano.append(renderPanorama(Gs, Hs))
+    pano.append(renderPanorama(Bs, Hs))
 
-        res = cv2.merge(pano)
-    except Exception:
-        st = cv2.createStitcher()
-        status, res = st.stitch(data)
-        if status !=0:
-            res = None
+    res = cv2.merge(pano)
+
     cv2.imwrite(out, res)
 
 
@@ -324,7 +401,7 @@ def generatePanorama(path=None, out='out.jpg'):
     for p in im_paths:
         im = read_frames(p)
         data.append(im)
-        show(im)
+        # show(im)
 
     rH = []
     for i in range(len(im_paths)-1):
