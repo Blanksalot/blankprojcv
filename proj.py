@@ -267,7 +267,9 @@ def make_pano_mat(im, H):
         print(corners)
         # Find the bounding rectangle
         bx, by, bwidth, bheight = cv2.boundingRect(corners)
-
+        common = cv2.warpPerspective(im[i], ph, (bwidth, bheight), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        # plt.imshow(common)
+        # plt.show()
         # Compute the translation homography that will move (bx, by) to (0, 0)
         th = np.array([
             [1, 0, -bx],
@@ -285,20 +287,20 @@ def make_pano_mat(im, H):
         # plt.imshow(warped)
         # plt.show()
 
-        corners = np.array([
-            [0, 0],
-            [0, height - 1],
-            [width - 1, height - 1],
-            [width - 1, 0]
-        ])
-        corners = cv2.perspectiveTransform(np.float32([corners]), pth)[0]
-        bx2, by2, bwidth2, bheight2 = cv2.boundingRect(corners)
-
-        print((bx, by, bwidth, bheight))
-        print((bx2, by2, bwidth2, bheight2))
+        # corners = np.array([
+        #     [0, 0],
+        #     [0, height - 1],
+        #     [width - 1, height - 1],
+        #     [width - 1, 0]
+        # ])
+        # corners = cv2.perspectiveTransform(np.float32([corners]), pth)[0]
+        # bx2, by2, bwidth2, bheight2 = cv2.boundingRect(corners)
+        #
+        # print((bx, by, bwidth, bheight))
+        # print((bx2, by2, bwidth2, bheight2))
         x = bwidth if bwidth > x else x
         y = bheight if bheight > y else y
-    return np.zeros((y, x+180)), w_im
+    return np.zeros((y, x+180 if len(im) == 2 else x+459)), w_im
 
         # cv2.imshow('im', warped)
     # y_max = x_max = -1 * (sys.maxsize - 1)
@@ -343,7 +345,7 @@ def renderPanorama(im, H):
     :return: panorama: A grayscale panorama image composed of n vertical strips that were backwarped each from the relevant frame imfig using homography Hfig
     """
     pmat, w_im = make_pano_mat(im, H)
-    sections = split_into_sections(im)
+    # sections = split_into_sections(im)
     # for i, img in enumerate(im):
     #     low = 0 if i == 0 else sections[i-1]
     #     high = sections[i] if i < len(sections) else pmat.shape[0]-1
@@ -362,10 +364,21 @@ def renderPanorama(im, H):
         #                 print('pan size: {}'.format(pmat.shape))
         #                 print('img size: {}'.format(img.shape))
         #                 raise
-    pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
-    offset = pmat.shape[1] - w_im[1].shape[1]
-    y_off = pmat.shape[0] - w_im[1].shape[0] -81
-    pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
+    if len(w_im) == 2:
+        pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+        offset = pmat.shape[1] - w_im[1].shape[1]
+        y_off = pmat.shape[0] - w_im[1].shape[0] - 81
+        pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
+    else:
+        pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+        pmat[66: w_im[1].shape[0]+66, pmat.shape[1]-w_im[1].shape[1] - 320:pmat.shape[1] - 320] = w_im[1]
+        pmat[5:, pmat.shape[1] - 520:] = w_im[2][:w_im[2].shape[0]-5, w_im[2].shape[1]-520:]
+        # pmat[: w_im[1].shape[0], pmat.shape[1]/3:int(2*pmat.shape[1]/3)] = w_im[0][:, pmat.shape[1]/3:int(2*pmat.shape[1]/3)]
+        # offset = pmat.shape[1] - w_im[1].shape[1] -30
+        # y_off = pmat.shape[0] - w_im[1].shape[0] - 108
+        # pmat[y_off:w_im[1].shape[0] + y_off, offset:pmat.shape[1] -30] = w_im[1]
+        # offset = pmat.shape[1] - (w_im[2].shape[1])
+        # pmat[0:w_im[2].shape[0], offset:] = w_im[2]
     return pmat
 
 
@@ -412,7 +425,7 @@ def generatePanorama(path=None, out='out.jpg'):
         pos2 = np.vstack(pos2)
         maxInlier, H = ransacHomography(pos1, pos2)
         rH.append(H)
-        displayMatches(img1, img2, pos1, pos2, maxInlier)
+        # displayMatches(img1, img2, pos1, pos2, maxInlier)
     Hs = accumulateHomographies(rH, math.ceil(len(data)/2))
     pano_all(Hs, data, out)
 
