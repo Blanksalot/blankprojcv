@@ -246,6 +246,52 @@ def accumulateHomographies(h_pair, m):
         htot[3] = inv(h_pair[2]).dot(inv(h_pair[1]))
     return htot
 
+def make_pano_mat_ex(im, H):
+    w_im = []
+    x = 0
+    y = 0
+    for i in range(len(im)):
+        # Compute the perspective transform matrix for the points
+        ph = H[i]
+        print('h {0} = {1}'.format(i, H[i]))
+        # Find the corners after the transform has been applied
+        height, width = im[i].shape[:2]
+        corners = np.array([
+            [0, 0],
+            [0, height - 1],
+            [width - 1, height - 1],
+            [width - 1, 0]
+        ])
+        corners = cv2.perspectiveTransform(np.float32([corners]), ph)[0]
+        # Find the bounding rectangle
+        bx, by, bwidth, bheight = cv2.boundingRect(corners)
+        common = cv2.warpPerspective(im[i], ph, (bwidth, bheight), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        # Compute the translation homography that will move (bx, by) to (0, 0)
+        th = np.array([
+            [1, 0, -bx],
+            [0, 1, -by],
+            [0, 0, 1]
+        ])
+
+        # Combine the homographies
+        pth = th.dot(ph)
+
+        # Apply the transformation to the image
+        warped = cv2.warpPerspective(im[i], pth, (bwidth, bheight), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        w_im.append(warped)
+        x = bwidth if bwidth > x else x
+        y = bheight if bheight > y else y
+    if len(im) == 2:
+        x += 330
+    elif len(im) == 3:
+        x = 1620
+        y = 670
+    else:
+        x = 2100
+        y = 1648
+    return np.zeros((y, x)), w_im
+
+
 def make_pano_mat(im, H):
     w_im = []
     x = 0
@@ -337,14 +383,17 @@ def split_into_sections(im):
 
     return borders
 
-def renderPanorama(im, H):
+def renderPanorama(im, H, ex_img):
     """
     Renders a set of images into a combined panorama image.
     :param im: array or dict of n grayscale images
     :param H: array or dict array of n 3x3 homography matrices transforming the ith image coordinates to the panorama image coordinates.
     :return: panorama: A grayscale panorama image composed of n vertical strips that were backwarped each from the relevant frame imfig using homography Hfig
     """
-    pmat, w_im = make_pano_mat(im, H)
+    if ex_img:
+        pmat, w_im = make_pano_mat_ex(im, H)
+    else:
+        pmat, w_im = make_pano_mat(im, H)
     # sections = split_into_sections(im)
     # for i, img in enumerate(im):
     #     low = 0 if i == 0 else sections[i-1]
@@ -364,26 +413,66 @@ def renderPanorama(im, H):
         #                 print('pan size: {}'.format(pmat.shape))
         #                 print('img size: {}'.format(img.shape))
         #                 raise
-    if len(w_im) == 2:
-        pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
-        offset = pmat.shape[1] - w_im[1].shape[1]
-        y_off = pmat.shape[0] - w_im[1].shape[0] - 81
-        pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
-    else:
-        pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+    if ex_img:
+        def set_if_empty(iid, xs, xe, ys, ye):
+            for y in range(ys, ye):
+                for x in range(xs, xe):
+                    try:
+                        pmat[y, x] = w_im[iid][y - ys, x - xs] if pmat[y, x] == 0 else pmat[y, x]
+                    except Exception:
+                        print('{0} {1} {2} {3}'.format(xs, xe, ys, ye))
+                        print(iid)
+                        print(y)
+                        print(x)
+                        raise
 
-        pmat[66: w_im[1].shape[0]+66, pmat.shape[1]-w_im[1].shape[1] - 320:pmat.shape[1] - 320] = w_im[1]
-        a = pmat[66: w_im[1].shape[0]+66, pmat.shape[1]-w_im[1].shape[1] - 320:pmat.shape[1] - 320]
-        b = np.zeros(a.shape)
-        for i in range(a.shape[0]):
-            for j in range(a.shape)
-        print(b)
-        pmat[5:, pmat.shape[1] - 520:] = w_im[2][:w_im[2].shape[0]-5, w_im[2].shape[1]-520:]
+        if len(w_im) == 2:
+            pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+            offset = pmat.shape[1] - w_im[1].shape[1]
+            y_off = pmat.shape[0] - w_im[1].shape[0] - 50
+            pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
+        elif len(w_im) == 3:
+            y1s = 48
+            y1e = y1s + w_im[0].shape[0]
+            x1s = 0
+            x1e = w_im[0].shape[1]
+            set_if_empty(0, x1s, x1e, y1s, y1e)
+            y2s = 145
+            y2e = y2s + w_im[1].shape[0]
+            x2s = x1e -153
+            x2e = x2s + w_im[1].shape[1]
+            set_if_empty(1, x2s, x2e, y2s, y2e)
+            y3s = 0
+            y3e = w_im[2].shape[0]
+            x3s = x2e -219
+            x3e = x3s + w_im[2].shape[1]
+            set_if_empty(2, x3s, x3e, y3s, y3e)
+        else:
+            ys = [325, 382, 261, 0]
+            ye = [ys[_] + w_im[_].shape[0] for _ in range(4)]
+            x =  [(0, w_im[0].shape[1]),
+                  (w_im[0].shape[1] - 243, w_im[0].shape[1]+w_im[1].shape[1] - 243),
+                  (w_im[0].shape[1]+w_im[1].shape[1] -488, w_im[0].shape[1]+w_im[1].shape[1]+w_im[2].shape[1] -488),
+                  (w_im[0].shape[1]+w_im[1].shape[1]+w_im[2].shape[1]-939, w_im[0].shape[1]+w_im[1].shape[1]+w_im[2].shape[1]+w_im[3].shape[1]-939)]
+
+            for im_id in range(4):
+                set_if_empty(im_id, x[im_id][0], x[im_id][1], ys[im_id], ye[im_id])
+
+    else:
+        if len(w_im) == 2:
+            pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+            offset = pmat.shape[1] - w_im[1].shape[1]
+            y_off = pmat.shape[0] - w_im[1].shape[0] - 81
+            pmat[y_off:w_im[1].shape[0]+y_off, offset:] = w_im[1]
+        else:
+            pmat[: w_im[0].shape[0], :w_im[0].shape[1]] = w_im[0]
+            pmat[66: w_im[1].shape[0]+66, pmat.shape[1]-w_im[1].shape[1] - 320:pmat.shape[1] - 320] = w_im[1]
+            pmat[5:, pmat.shape[1] - 520:] = w_im[2][:w_im[2].shape[0]-5, w_im[2].shape[1]-520:]
 
     return pmat
 
 
-def pano_all(Hs, data, out):
+def pano_all(Hs, data, out, ex_img):
     pano = list()
     Rs = []
     Gs = []
@@ -394,16 +483,16 @@ def pano_all(Hs, data, out):
         Rs.append(r)
         Gs.append(g)
         Bs.append(b)
-    pano.append(renderPanorama(Rs, Hs))
-    pano.append(renderPanorama(Gs, Hs))
-    pano.append(renderPanorama(Bs, Hs))
+    pano.append(renderPanorama(Rs, Hs, ex_img))
+    pano.append(renderPanorama(Gs, Hs, ex_img))
+    pano.append(renderPanorama(Bs, Hs, ex_img))
 
     res = cv2.merge(pano)
 
     cv2.imwrite(out, res)
 
 
-def generatePanorama(path=None, out='out.jpg'):
+def generatePanorama(path=None, out='out.jpg', ex_img=False):
     if not path:
         path = r'C:\workspace\blankprojcv\data\inp\examples\ox\*.jpg'
     else:
@@ -428,7 +517,7 @@ def generatePanorama(path=None, out='out.jpg'):
         rH.append(H)
         # displayMatches(img1, img2, pos1, pos2, maxInlier)
     Hs = accumulateHomographies(rH, math.ceil(len(data)/2))
-    pano_all(Hs, data, out)
+    pano_all(Hs, data, out, ex_img)
 
 
 
